@@ -92,16 +92,17 @@ function parseSections(text: string): Generated {
     };
 }
 
-// AI 偶尔会把整份代码写两遍：去掉围栏后，若首行（通常是 #include）或 int main 重复出现，截到第二份之前
+// AI 偶尔会把代码写两遍（先写一份草稿，再写一份"修正版"）：取最后一份完整程序
 function dedupeCode(raw: string) {
     let code = raw.replace(/^```[a-z+]*\s*\n/i, '').replace(/\n```[\s\S]*$/i, '').trim();
     const mains = [...code.matchAll(/\bint\s+main\s*\(/g)].map((m) => m.index!);
     if (mains.length > 1) {
-        // 从第二个 main 往前找最近的 #include，作为第二份的起点
-        const before = code.slice(0, mains[1]);
-        const inc = before.lastIndexOf('#include');
-        const cut = inc > mains[0] ? inc : mains[1];
-        code = code.slice(0, cut).trim();
+        // 最后一个 main 之前、上一个 main 之后的第一个 #include，是最后一份程序的起点
+        const lastMain = mains[mains.length - 1];
+        const prevMain = mains[mains.length - 2];
+        const inc = code.indexOf('#include', prevMain);
+        if (inc !== -1 && inc < lastMain) code = code.slice(inc).trim();
+        else code = code.slice(0, mains[1]).trim(); // 找不到分界就退回保留第一份
     }
     return `${code}\n`;
 }
@@ -239,6 +240,7 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
                 const MAX_FIXES = 4;
                 for (let i = 0; i < g.tests.length; i++) {
                     const r = await sb.exec(fid!, g.tests[i], g.time, g.memory);
+                    if (r.ok && !r.stdout.trim()) { r.ok = false; r.status = '标程没有任何输出（可能输入格式与标程读入不符，或标程未写完）'; }
                     if (r.ok) {
                         outputs.push(r.stdout);
                         await log(jobId, `第 ${i + 1} 组：标程 ${r.timeMs}ms，输出 ${r.stdout.length} 字节`);
