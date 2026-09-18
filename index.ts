@@ -106,6 +106,14 @@ function dedupeCode(raw: string) {
     return `${code}\n`;
 }
 
+// 题面里的样例块
+const SAMPLE_IN = /```input1\s*\n([\s\S]*?)```/;
+const SAMPLE_OUT = /```output1\s*\n([\s\S]*?)```/;
+const norm = (t: string) => t.replace(/\r/g, '').split('\n').map((l) => l.trimEnd()).join('\n').trim();
+
+// 题面里混进推理过程的特征
+const REASONING_HINTS = /让我们|让我|等等[，,]|重新检查|重新计算|算错|我将|我发现|不可能\)|是否我看错|难道/;
+
 // ---------- go-judge 沙箱 ----------
 
 class Sandbox {
@@ -289,6 +297,46 @@ ${g.std}`,
             }
         } else {
             throw new Error('没有配置沙箱地址，无法生成标准输出');
+        }
+
+        // 用标程结果校正题面里的样例输出
+        if (config.sandboxUrl) {
+            const mIn = SAMPLE_IN.exec(g.content);
+            const mOut = SAMPLE_OUT.exec(g.content);
+            if (mIn && mOut) {
+                let expected: string | null = null;
+                if (norm(mIn[1]) === norm(g.tests[0])) expected = outputs[0];
+                else {
+                    const sb = new Sandbox(config.sandboxUrl, config.compileCmd);
+                    const fid2 = await sb.compile(g.std);
+                    try {
+                        const r = await sb.exec(fid2, `${norm(mIn[1])}\n`, g.time, g.memory);
+                        if (r.ok) expected = r.stdout;
+                    } finally { await sb.free(fid2); }
+                }
+                if (expected !== null && norm(expected) !== norm(mOut[1])) {
+                    g.content = g.content.replace(SAMPLE_OUT, '```output1\n' + norm(expected) + '\n```');
+                    await log(jobId, '题面样例输出与标程不一致，已按标程结果改正');
+                }
+            }
+        }
+
+        // 题面里混进了推理过程：让 AI 只重写题面
+        if (REASONING_HINTS.test(g.content)) {
+            await log(jobId, '题面疑似混入推理过程，请 AI 重写题面…');
+            const rewritten = await callLLM(
+                '你是信息学竞赛命题人。下面这份 Markdown 题面里混进了作者核对、推导、自我修正的草稿文字。请输出整理后的正式题面：保留全部小节和样例数据不变（样例输入输出一个字符都不能改），样例解释只保留结论性说明，删除所有推理、犹豫、检查过程。只输出 Markdown 题面，不要任何额外说明，不要围栏包住整体。',
+                g.content,
+            );
+            const cleaned = rewritten.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/^\s*```(?:markdown|md)?\s*\n/i, '').replace(/\n```\s*$/i, '').trim();
+            const oIn = SAMPLE_IN.exec(g.content)?.[1]; const nIn = SAMPLE_IN.exec(cleaned)?.[1];
+            const oOut = SAMPLE_OUT.exec(g.content)?.[1]; const nOut = SAMPLE_OUT.exec(cleaned)?.[1];
+            if (cleaned.length > 100 && oIn && nIn && norm(oIn) === norm(nIn) && oOut && nOut && norm(oOut) === norm(nOut)) {
+                g.content = cleaned;
+                await log(jobId, '题面已重写');
+            } else {
+                await log(jobId, '重写结果样例不一致，保留原题面，请人工检查');
+            }
         }
 
         // 入库
