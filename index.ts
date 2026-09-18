@@ -260,7 +260,7 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
 
         async get(domainId: string) {
             const recent = await jobs.find({ domainId }).sort({ createdAt: -1 }).limit(20).toArray();
-            this.response.body = { recent, configured: !!config.baseUrl, model: config.model };
+            this.response.body = { recent, configured: !!config.baseUrl, modelName: config.model };
             this.response.template = 'ai_author.html';
         }
 
