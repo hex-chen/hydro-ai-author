@@ -227,12 +227,63 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
                 }
             }
             try {
+                let fixes = 0;
+                const MAX_FIXES = 4;
                 for (let i = 0; i < g.tests.length; i++) {
                     const r = await sb.exec(fid!, g.tests[i], g.time, g.memory);
-                    if (!r.ok) throw new Error(`标程跑第 ${i + 1} 组数据失败：${r.status} ${r.stderr.slice(0, 300)}`);
-                    outputs.push(r.stdout);
-                    await log(jobId, `第 ${i + 1} 组：标程 ${r.timeMs}ms，输出 ${r.stdout.length} 字节`);
+                    if (r.ok) {
+                        outputs.push(r.stdout);
+                        await log(jobId, `第 ${i + 1} 组：标程 ${r.timeMs}ms，输出 ${r.stdout.length} 字节`);
+                        continue;
+                    }
+                    // 跑挂了：让 AI 决定是改数据还是改标程
+                    if (fixes >= MAX_FIXES) {
+                        await log(jobId, `第 ${i + 1} 组：${r.status}，修复次数用完，丢弃这组数据`);
+                        g.tests.splice(i, 1); i--;
+                        continue;
+                    }
+                    fixes++;
+                    await log(jobId, `第 ${i + 1} 组：标程 ${r.status}（${r.timeMs}ms，限制 ${g.time}ms），请 AI 修正…`);
+                    const reply = await callLLM(
+                        `你是信息学竞赛命题人。标程在某组测试数据上运行失败，请判断原因并二选一给出修正：
+- 如果是这组输入超出了题面数据范围、或规模过大导致标程无法在时限内完成，输出一组符合数据范围、规模明显更小但仍有意义的替换输入；
+- 如果是标程本身有错或复杂度不达标，输出修正后的完整标程。
+严格按以下格式之一输出，不要输出其他内容：
+===INPUT===
+（替换输入）
+或
+===STD===
+（完整 C++17 程序，不要围栏）`,
+                        `题目《${g.title}》，时限 ${g.time}ms，内存 ${g.memory}MB。
+题面（含数据范围）：
+${g.content.slice(0, 4000)}
+
+失败信息：第 ${i + 1} 组，状态 ${r.status}，用时 ${r.timeMs}ms。stderr：${r.stderr.slice(0, 500)}
+该组输入开头（共 ${g.tests[i].length} 字符）：
+${g.tests[i].slice(0, 1500)}
+
+当前标程：
+${g.std}`,
+                    );
+                    const t = reply.replace(/<think>[\s\S]*?<\/think>/g, '');
+                    const mInput = /===\s*INPUT\s*===\s*\n([\s\S]*)$/.exec(t);
+                    const mStd = /===\s*STD\s*===\s*\n([\s\S]*)$/.exec(t);
+                    if (mStd) {
+                        g.std = dedupeCode(mStd[1]);
+                        await log(jobId, 'AI 修改了标程，重新编译并从第 1 组重跑');
+                        await sb.free(fid!);
+                        fid = await sb.compile(g.std);
+                        outputs.length = 0; i = -1;
+                    } else if (mInput) {
+                        g.tests[i] = mInput[1].replace(/\s+$/, '') + '\n';
+                        await log(jobId, `AI 替换了第 ${i + 1} 组输入（${g.tests[i].length} 字符），重跑这组`);
+                        i--;
+                    } else {
+                        await log(jobId, `AI 回复无法解析，丢弃第 ${i + 1} 组数据`);
+                        g.tests.splice(i, 1); i--;
+                    }
                 }
+                if (g.tests.length < 2) throw new Error('可用测试数据不足 2 组');
             } finally {
                 if (fid) await sb.free(fid);
             }
