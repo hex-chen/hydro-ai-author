@@ -80,7 +80,7 @@ function parseSections(text: string): Generated {
         .sort((a, b) => +a.slice(5) - +b.slice(5))
         .map((k) => parts[k]).filter((s) => s.trim().length);
     if (!tests.length) throw new Error('AI 没有给出测试数据');
-    const std = parts.STD.replace(/^```[a-z+]*\s*\n/i, '').replace(/\n```\s*$/i, '');
+    const std = dedupeCode(parts.STD);
     return {
         title: parts.TITLE.split('\n')[0].trim().slice(0, 60),
         tags: (parts.TAGS || '').split(/[,，、\n]/).map((s) => s.trim()).filter(Boolean).slice(0, 6),
@@ -90,6 +90,20 @@ function parseSections(text: string): Generated {
         std,
         tests: tests.map((s) => (s.endsWith('\n') ? s : `${s}\n`)),
     };
+}
+
+// AI 偶尔会把整份代码写两遍：去掉围栏后，若首行（通常是 #include）或 int main 重复出现，截到第二份之前
+function dedupeCode(raw: string) {
+    let code = raw.replace(/^```[a-z+]*\s*\n/i, '').replace(/\n```[\s\S]*$/i, '').trim();
+    const mains = [...code.matchAll(/\bint\s+main\s*\(/g)].map((m) => m.index!);
+    if (mains.length > 1) {
+        // 从第二个 main 往前找最近的 #include，作为第二份的起点
+        const before = code.slice(0, mains[1]);
+        const inc = before.lastIndexOf('#include');
+        const cut = inc > mains[0] ? inc : mains[1];
+        code = code.slice(0, cut).trim();
+    }
+    return `${code}\n`;
 }
 
 // ---------- go-judge 沙箱 ----------
@@ -198,16 +212,29 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
         if (config.sandboxUrl) {
             const sb = new Sandbox(config.sandboxUrl, config.compileCmd);
             await log(jobId, '沙箱编译标程…');
-            const fid = await sb.compile(g.std);
+            let fid: string | null = null;
+            for (let attempt = 0; attempt < 3 && !fid; attempt++) {
+                try {
+                    fid = await sb.compile(g.std);
+                } catch (e: any) {
+                    if (attempt === 2) throw e;
+                    await log(jobId, `编译失败，请 AI 修正（第 ${attempt + 1} 次）：${e.message.split('\n')[0].slice(0, 200)}`);
+                    const fixed = await callLLM(
+                        '你是 C++ 专家。用户给出一份程序和它的编译错误，请输出修正后的完整程序。只输出代码，不要解释，不要 Markdown 围栏。',
+                        `编译错误：\n${e.message.slice(0, 3000)}\n\n程序：\n${g.std}`,
+                    );
+                    g.std = dedupeCode(fixed.replace(/<think>[\s\S]*?<\/think>/g, ''));
+                }
+            }
             try {
                 for (let i = 0; i < g.tests.length; i++) {
-                    const r = await sb.exec(fid, g.tests[i], g.time, g.memory);
+                    const r = await sb.exec(fid!, g.tests[i], g.time, g.memory);
                     if (!r.ok) throw new Error(`标程跑第 ${i + 1} 组数据失败：${r.status} ${r.stderr.slice(0, 300)}`);
                     outputs.push(r.stdout);
                     await log(jobId, `第 ${i + 1} 组：标程 ${r.timeMs}ms，输出 ${r.stdout.length} 字节`);
                 }
             } finally {
-                await sb.free(fid);
+                if (fid) await sb.free(fid);
             }
         } else {
             throw new Error('没有配置沙箱地址，无法生成标准输出');
@@ -258,7 +285,8 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
             this.checkPerm(PERM.PERM_CREATE_PROBLEM);
         }
 
-        async get(domainId: string) {
+        async get() {
+            const domainId = this.domain._id;
             const recent = await jobs.find({ domainId }).sort({ createdAt: -1 }).limit(20).toArray();
             this.response.body = { recent, configured: !!config.baseUrl, modelName: config.model };
             this.response.template = 'ai_author.html';
@@ -276,10 +304,21 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
             const owner = this.user._id;
             const hidden = config.hidden;
             runJob(jobId, async () => {
+                let ok = 0;
                 for (let i = 0; i < count; i++) {
-                    const pid = await generateProblem(jobId, domainId, owner, { topic, difficulty: Math.min(10, difficulty), cases, extra }, hidden);
+                    let pid: number | null = null;
+                    for (let attempt = 0; attempt < 2 && pid === null; attempt++) {
+                        try {
+                            pid = await generateProblem(jobId, domainId, owner, { topic, difficulty: Math.min(10, difficulty), cases, extra }, hidden);
+                        } catch (e: any) {
+                            await log(jobId, `第 ${i + 1} 题第 ${attempt + 1} 次生成失败：${e.message.split('\n')[0].slice(0, 200)}${attempt === 0 ? '，重试' : '，放弃'}`);
+                        }
+                    }
+                    if (pid === null) continue;
+                    ok++;
                     await jobs.updateOne({ _id: jobId }, { $push: { pids: pid } });
                 }
+                if (!ok) throw new Error('没有任何题目生成成功');
             });
             this.response.redirect = this.url('ai_author_job', { jid: jobId.toHexString() });
         }
@@ -314,10 +353,19 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
                     await log(jobId, `使用已有题目 P${pdoc.docId}《${pdoc.title}》`);
                 }
                 for (const spec of specList) {
-                    const pid = await generateProblem(jobId, domainId, owner, spec, true);
+                    let pid: number | null = null;
+                    for (let attempt = 0; attempt < 2 && pid === null; attempt++) {
+                        try {
+                            pid = await generateProblem(jobId, domainId, owner, spec, true);
+                        } catch (e: any) {
+                            await log(jobId, `「${spec.topic}」第 ${attempt + 1} 次生成失败：${e.message.split('\n')[0].slice(0, 200)}${attempt === 0 ? '，重试' : '，跳过这题'}`);
+                        }
+                    }
+                    if (pid === null) continue;
                     pids.push(pid);
                     await jobs.updateOne({ _id: jobId }, { $push: { pids: pid } });
                 }
+                if (!pids.length) throw new Error('没有任何题目生成成功，比赛未创建');
                 const desc = content || `${title}\n\n本场比赛由 AI 辅助命题。`;
                 const tid = await ContestModel.add(domainId, title, desc, owner, rule, begin, end, pids, false);
                 await jobs.updateOne({ _id: jobId }, { $set: { tid } });
