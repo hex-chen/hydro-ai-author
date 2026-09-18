@@ -97,7 +97,7 @@
           <tbody>
           {%- for j in recent -%}
           <tr>
-            <td><a href="{{ url('ai_author_job', jid=j._id) }}">{{ j.title }}</a></td>
+            <td><a href="{{ url('ai_author_job', jid=j._id.toString()) }}">{{ j.title }}</a></td>
             <td>{% if j.status == 'running' %}<span style="color:#f39c11">进行中</span>{% elif j.status == 'done' %}<span style="color:#27ae60">完成</span>{% else %}<span style="color:#c0392b">失败</span>{% endif %}</td>
             <td>{{ datetimeSpan(j.createdAt)|safe }}</td>
           </tr>

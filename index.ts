@@ -281,7 +281,7 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
                     await jobs.updateOne({ _id: jobId }, { $push: { pids: pid } });
                 }
             });
-            this.response.redirect = this.url('ai_author_job', { jid: jobId });
+            this.response.redirect = this.url('ai_author_job', { jid: jobId.toHexString() });
         }
 
         @param('title', Types.Title)
@@ -323,7 +323,7 @@ export async function apply(ctx: Context, config: ReturnType<typeof Config>) {
                 await jobs.updateOne({ _id: jobId }, { $set: { tid } });
                 await log(jobId, `比赛已创建：${title}，${pids.length} 题，${begin.toLocaleString('zh-CN')} 开始，时长 ${duration} 分钟`);
             });
-            this.response.redirect = this.url('ai_author_job', { jid: jobId });
+            this.response.redirect = this.url('ai_author_job', { jid: jobId.toHexString() });
         }
     }
 

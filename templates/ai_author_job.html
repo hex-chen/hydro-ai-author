@@ -13,7 +13,7 @@
 </div>
 <script>
 (function(){
-  var statusUrl = "{{ url('ai_author_job_status', jid=job._id) }}";
+  var statusUrl = "{{ url('ai_author_job_status', jid=job._id.toString()) }}";
   var pUrl = "{{ url('problem_detail', pid='__PID__') }}";
   var cUrl = "{{ url('contest_detail', tid='__TID__') }}";
   var logEl = document.getElementById('ai-log'), stEl = document.getElementById('ai-status'), rsEl = document.getElementById('ai-result');
