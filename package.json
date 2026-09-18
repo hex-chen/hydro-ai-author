@@ -1,0 +1,9 @@
+{
+  "name": "hydro-ai-author",
+  "version": "0.1.0",
+  "description": "Hydro OJ 插件：填一个 OpenAI 兼容 API，AI 自动出题（题面+标程+沙箱生成测试数据）并一键建比赛",
+  "main": "index.ts",
+  "license": "MIT",
+  "keywords": ["hydro", "hydrooj", "oi", "llm", "problem", "contest"],
+  "peerDependencies": { "hydrooj": "^5.0.0" }
+}

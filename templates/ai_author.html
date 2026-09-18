@@ -1,0 +1,115 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="row">
+  <div class="medium-7 columns">
+    {% if not configured %}
+    <div class="section"><div class="section__body">
+      <p style="color:#c0392b">还没有配置 AI 接口。请到 控制面板 → 配置管理 → hydro-ai-author 填写 baseUrl / apiKey / model。</p>
+    </div></div>
+    {% endif %}
+
+    <div class="section">
+      <div class="section__header"><h1 class="section__title">AI 出题</h1></div>
+      <div class="section__body">
+        <form method="post">
+          <input type="hidden" name="operation" value="problem">
+          <div class="row"><div class="columns">
+            <label class="textbox-container">考点 / 主题（留空则自由发挥）
+              <input name="topic" type="text" class="textbox" placeholder="例如：前缀和 + 二分；或：模拟一个电梯调度">
+            </label>
+          </div></div>
+          <div class="row">
+            <div class="medium-4 columns"><label class="textbox-container">难度 1~10
+              <input name="difficulty" type="number" class="textbox" value="4" min="1" max="10"></label></div>
+            <div class="medium-4 columns"><label class="textbox-container">测试数据组数
+              <input name="cases" type="number" class="textbox" value="10" min="1" max="30"></label></div>
+            <div class="medium-4 columns"><label class="textbox-container">一次出几题
+              <input name="count" type="number" class="textbox" value="1" min="1" max="10"></label></div>
+          </div>
+          <div class="row"><div class="columns">
+            <label class="textbox-container">其他要求（可选）
+              <input name="extra" type="text" class="textbox" placeholder="例如：题面用校园生活场景；n 不超过 1e5">
+            </label>
+          </div></div>
+          <button type="submit" class="rounded primary button">开始出题</button>
+          <span class="supplementary">每题约 1~5 分钟，生成后默认隐藏，请人工审核题面和数据后再公开。</span>
+        </form>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section__header"><h1 class="section__title">AI 建比赛</h1></div>
+      <div class="section__body">
+        <form method="post">
+          <input type="hidden" name="operation" value="contest">
+          <div class="row">
+            <div class="medium-8 columns"><label class="textbox-container">比赛标题
+              <input name="title" type="text" class="textbox" required placeholder="例如：周赛 #3"></label></div>
+            <div class="medium-4 columns"><label class="select-container">赛制
+              <select name="rule" class="select">
+                <option value="oi">OI</option>
+                <option value="acm">ACM</option>
+                <option value="ioi">IOI</option>
+                <option value="ledo">乐多</option>
+                <option value="strictioi">严格 IOI</option>
+              </select></label></div>
+          </div>
+          <div class="row">
+            <div class="medium-7 columns"><label class="textbox-container">开始时间
+              <input name="beginAt" type="datetime-local" class="textbox" required></label></div>
+            <div class="medium-5 columns"><label class="textbox-container">时长（分钟）
+              <input name="duration" type="number" class="textbox" value="120" min="10"></label></div>
+          </div>
+          <div class="row"><div class="columns">
+            <label class="textbox-container">AI 新出的题，每行一题：考点|难度（难度可省略）
+              <textarea name="specs" class="textbox" rows="4" placeholder="模拟|2
+贪心|4
+动态规划|6"></textarea>
+            </label>
+          </div></div>
+          <div class="row">
+            <div class="medium-6 columns"><label class="textbox-container">默认难度
+              <input name="difficulty" type="number" class="textbox" value="4" min="1" max="10"></label></div>
+            <div class="medium-6 columns"><label class="textbox-container">每题数据组数
+              <input name="cases" type="number" class="textbox" value="10" min="1" max="30"></label></div>
+          </div>
+          <div class="row"><div class="columns">
+            <label class="textbox-container">已有题目（可选，题号逗号分隔，排在 AI 新题前面）
+              <input name="pids" type="text" class="textbox" placeholder="例如：P1001, P1005"></label>
+          </div></div>
+          <div class="row"><div class="columns">
+            <label class="textbox-container">比赛说明（可选）
+              <textarea name="content" class="textbox" rows="2"></textarea></label>
+          </div></div>
+          <button type="submit" class="rounded primary button">开始建比赛</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="medium-5 columns">
+    <div class="section">
+      <div class="section__header"><h1 class="section__title">最近任务</h1></div>
+      <div class="section__body no-padding">
+        {% if not recent.length %}<p class="section__body">还没有任务。</p>{% else %}
+        <table class="data-table">
+          <thead><tr><th>任务</th><th>状态</th><th>时间</th></tr></thead>
+          <tbody>
+          {%- for j in recent -%}
+          <tr>
+            <td><a href="{{ url('ai_author_job', jid=j._id) }}">{{ j.title }}</a></td>
+            <td>{% if j.status == 'running' %}<span style="color:#f39c11">进行中</span>{% elif j.status == 'done' %}<span style="color:#27ae60">完成</span>{% else %}<span style="color:#c0392b">失败</span>{% endif %}</td>
+            <td>{{ datetimeSpan(j.createdAt)|safe }}</td>
+          </tr>
+          {%- endfor -%}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </div>
+    <div class="section"><div class="section__body">
+      <p class="supplementary">当前模型：{{ model or '未配置' }}。AI 生成题面、标程和测试输入，标准输出由沙箱运行标程得到；标程保存在题目的附加文件 std.cpp 里。</p>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

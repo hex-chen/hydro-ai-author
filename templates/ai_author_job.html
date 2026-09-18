@@ -1,0 +1,39 @@
+{% extends "layout/basic.html" %}
+{% block content %}
+<div class="section">
+  <div class="section__header">
+    <h1 class="section__title">{{ job.title }}</h1>
+    <div class="section__tools"><a class="rounded button" href="{{ url('ai_author') }}">返回</a></div>
+  </div>
+  <div class="section__body">
+    <p>状态：<b id="ai-status">{% if job.status == 'running' %}进行中…{% elif job.status == 'done' %}完成{% else %}失败{% endif %}</b></p>
+    <div id="ai-result"></div>
+    <pre id="ai-log" style="background:#f6f6f6;padding:12px;max-height:60vh;overflow:auto;white-space:pre-wrap">{{ job.log|join('\n') }}</pre>
+  </div>
+</div>
+<script>
+(function(){
+  var statusUrl = "{{ url('ai_author_job_status', jid=job._id) }}";
+  var pUrl = "{{ url('problem_detail', pid='__PID__') }}";
+  var cUrl = "{{ url('contest_detail', tid='__TID__') }}";
+  var logEl = document.getElementById('ai-log'), stEl = document.getElementById('ai-status'), rsEl = document.getElementById('ai-result');
+  function render(d){
+    logEl.textContent = d.log.join('\n'); logEl.scrollTop = logEl.scrollHeight;
+    stEl.textContent = d.status === 'running' ? '进行中…' : d.status === 'done' ? '完成' : '失败';
+    var html = '';
+    if (d.pids && d.pids.length) html += '<p>已生成题目：' + d.pids.map(function(p){ return '<a href="' + pUrl.replace('__PID__', p) + '">P' + p + '</a>'; }).join('，') + '</p>';
+    if (d.tid) html += '<p>比赛：<a href="' + cUrl.replace('__TID__', d.tid) + '">打开比赛</a></p>';
+    if (d.error) html += '<p style="color:#c0392b">' + d.error + '</p>';
+    rsEl.innerHTML = html;
+    return d.status === 'running';
+  }
+  function poll(){
+    fetch(statusUrl, { headers: { Accept: 'application/json' }, credentials: 'same-origin' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (render(d)) setTimeout(poll, 3000); })
+      .catch(function(){ setTimeout(poll, 5000); });
+  }
+  poll();
+})();
+</script>
+{% endblock %}
